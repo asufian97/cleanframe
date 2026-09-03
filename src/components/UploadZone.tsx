@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { UploadCloud, Image as ImageIcon, Sparkles, ShieldCheck, ArrowRight } from 'lucide-react';
+import { UploadCloud, Image as ImageIcon, Sparkles, ShieldCheck, ArrowRight, AlertCircle, X } from 'lucide-react';
 import { createSampleAiImage } from '../lib/sampleImages';
+
+export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB limit
+export const MAX_FILE_SIZE_MB = 10;
 
 interface UploadZoneProps {
   onImageSelected: (file: File) => void;
@@ -10,7 +13,26 @@ interface UploadZoneProps {
 export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadingSample }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [loadingSampleInternal, setLoadingSampleInternal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const validateAndSelectFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('Unsupported file type. Please upload a PNG, JPEG, or WebP image.');
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      const actualSizeMb = (file.size / (1024 * 1024)).toFixed(2);
+      setErrorMessage(
+        `File size exceeds 10 MB limit (${actualSizeMb} MB). Please select an image under 10 MB for browser canvas stability.`
+      );
+      return;
+    }
+
+    setErrorMessage(null);
+    onImageSelected(file);
+  };
 
   // Global paste listener so users can copy any image from web or snipping tool and press Ctrl+V
   useEffect(() => {
@@ -19,7 +41,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadi
         const file = e.clipboardData.files[0];
         if (file.type.startsWith('image/')) {
           e.preventDefault();
-          onImageSelected(file);
+          validateAndSelectFile(file);
         }
       }
     };
@@ -42,21 +64,22 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadi
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
-      if (file.type.startsWith('image/')) {
-        onImageSelected(file);
-      }
+      validateAndSelectFile(file);
     }
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      onImageSelected(e.target.files[0]);
+      validateAndSelectFile(e.target.files[0]);
     }
+    // Reset file input value so user can re-select same file if needed
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleLoadSample = async () => {
     try {
       setLoadingSampleInternal(true);
+      setErrorMessage(null);
       const sample = await createSampleAiImage();
       onImageSelected(sample.file);
     } catch (err) {
@@ -65,6 +88,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadi
       setLoadingSampleInternal(false);
     }
   };
+
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 py-8">
@@ -85,6 +109,26 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadi
           CleanFrame scrubs metadata via Canvas re-encoding and applies micro-disturbances so your creations stay private.
         </p>
       </div>
+
+      {/* Error Alert Banner */}
+      {errorMessage && (
+        <div className="mb-6 p-4 rounded-xl bg-rose-950/40 border border-rose-500/40 text-rose-200 flex items-start justify-between gap-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <div className="text-xs font-semibold text-rose-300 mb-0.5">Upload Limit Exceeded</div>
+              <p className="text-xs text-rose-200/90 leading-relaxed">{errorMessage}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="p-1 rounded-lg hover:bg-rose-900/50 text-rose-400 hover:text-rose-200 transition-colors cursor-pointer"
+            title="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Main Drag & Drop Zone */}
       <div
@@ -135,11 +179,12 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadi
           <span className="px-2.5 py-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-300 font-mono font-medium">
             WEBP
           </span>
-          <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">
-            Zero Size Limit (Local)
+          <span className="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 font-medium">
+            Max 10 MB Limit
           </span>
         </div>
       </div>
+
 
       {/* Quick Action Sample Image Bar */}
       <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/30 border border-slate-800/60 text-xs">

@@ -39,9 +39,15 @@ export function App() {
 
   // Handle image selection
   const handleImageSelected = async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      console.warn('File exceeds 10 MB limit.');
+      return;
+    }
+
     setSourceFile(file);
     const url = URL.createObjectURL(file);
     setOriginalImageUrl(url);
+
 
     // Create Image element for canvas operations
     const img = new Image();
