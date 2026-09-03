@@ -6,6 +6,7 @@ import { ControlsPanel } from './components/ControlsPanel';
 import { InspectionPanel } from './components/InspectionPanel';
 import { ActionBar } from './components/ActionBar';
 import { PrivacyModal } from './components/PrivacyModal';
+import { SocialLabelComparison } from './components/SocialLabelComparison';
 import type { MetadataAuditResult } from './lib/metadataScanner';
 import { scanImageMetadata } from './lib/metadataScanner';
 import type {
@@ -13,7 +14,8 @@ import type {
   ProcessedImageResult,
 } from './lib/imageProcessor';
 import { PRESETS, processImageClientSide } from './lib/imageProcessor';
-import { Shield, ArrowLeft, FileText } from 'lucide-react';
+import { Shield, ArrowLeft, FileText, Share2 } from 'lucide-react';
+
 
 
 export function App() {
@@ -34,10 +36,12 @@ export function App() {
   const [originalAudit, setOriginalAudit] = useState<MetadataAuditResult | null>(null);
   const [processedAudit, setProcessedAudit] = useState<MetadataAuditResult | null>(null);
 
-  // Privacy modal
+  // Privacy modal & Social Simulation state
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState<boolean>(false);
+  const [showSocialSim, setShowSocialSim] = useState<boolean>(true);
 
   // Handle image selection
+
   const handleImageSelected = async (file: File) => {
     if (file.size > 10 * 1024 * 1024) {
       console.warn('File exceeds 10 MB limit.');
@@ -183,6 +187,19 @@ export function App() {
 
               <div className="flex items-center gap-2 self-end sm:self-auto text-xs">
                 <button
+                  onClick={() => setShowSocialSim(!showSocialSim)}
+                  className={`px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    showSocialSim
+                      ? 'bg-purple-950/60 border-purple-500/40 text-purple-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750'
+                  }`}
+                  title="Toggle Facebook/Instagram 'AI Content' post preview"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>{showSocialSim ? 'Hide Social Simulation' : 'Social "AI Label" Preview'}</span>
+                </button>
+
+                <button
                   onClick={() => setIsPrivacyModalOpen(true)}
                   className="px-2.5 py-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
@@ -215,6 +232,14 @@ export function App() {
                   isProcessing={isProcessing}
                 />
 
+                {/* Simulated Social Post: AI Label Eradication Demonstration */}
+                {showSocialSim && (
+                  <SocialLabelComparison
+                    customImage={processedResult?.objectUrl || originalImageUrl}
+                    brandName={sourceFile.name.replace(/\.[^/.]+$/, '').slice(0, 20)}
+                  />
+                )}
+
                 {/* Cryptographic & Metadata Inspection Panel */}
                 <InspectionPanel
                   originalAudit={originalAudit}
@@ -224,6 +249,7 @@ export function App() {
                   processingTimeMs={processedResult?.processingTimeMs}
                 />
               </div>
+
 
               {/* Right Column: Controls Panel & Presets */}
               <div className="lg:col-span-5 xl:col-span-4 flex flex-col gap-6 sticky top-20">

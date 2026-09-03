@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { UploadCloud, Image as ImageIcon, Sparkles, ShieldCheck, ArrowRight, AlertCircle, X } from 'lucide-react';
 import { createSampleAiImage } from '../lib/sampleImages';
+import { SocialLabelComparison } from './SocialLabelComparison';
+
 
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB limit
 export const MAX_FILE_SIZE_MB = 10;
@@ -206,6 +208,12 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onImageSelected, isLoadi
           <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
         </button>
       </div>
+
+      {/* Real-World Demonstration: Removing the AI Content Label */}
+      <div className="mt-12">
+        <SocialLabelComparison />
+      </div>
     </div>
+
   );
 };
