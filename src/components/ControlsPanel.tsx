@@ -5,9 +5,13 @@ import {
   SunMedium,
   Contrast,
   FileCheck,
+  Palette,
+  RotateCw,
+  Feather,
 } from 'lucide-react';
 import type { DisturbanceConfig } from '../lib/imageProcessor';
 import { PRESETS } from '../lib/imageProcessor';
+
 
 interface ControlsPanelProps {
   config: DisturbanceConfig;
@@ -200,7 +204,83 @@ export const ControlsPanel: React.FC<ControlsPanelProps> = ({
             Shaves 1-4 outer pixels to alter spatial coordinate alignment and break grid-aligned fingerprint detectors.
           </p>
         </div>
+
+        {/* 5. Chrominance (Cb/Cr) Channel Dither */}
+        <div className="space-y-1.5 pt-2 border-t border-slate-800/50">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Palette className="w-3.5 h-3.5 text-pink-400" />
+              <span>Chrominance (Cb/Cr) Dither</span>
+            </div>
+            <span className="font-mono text-pink-400 font-semibold bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[11px]">
+              {config.chrominanceDither.toFixed(1)}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={5}
+            step={0.1}
+            value={config.chrominanceDither}
+            onChange={(e) => updateField('chrominanceDither', parseFloat(e.target.value))}
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+          />
+          <p className="text-[11px] text-slate-500">
+            Disrupts color sub-bands where SynthID and latent neural models hide watermarks without luminance loss.
+          </p>
+        </div>
+
+        {/* 6. Sub-Pixel Spatial Jitter */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <RotateCw className="w-3.5 h-3.5 text-purple-400" />
+              <span>Spatial Grid Jitter</span>
+            </div>
+            <span className="font-mono text-purple-400 font-semibold bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[11px]">
+              {config.spatialJitter > 0 ? `${config.spatialJitter.toFixed(2)}°` : 'Off (0°)'}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={0.10}
+            step={0.01}
+            value={config.spatialJitter}
+            onChange={(e) => updateField('spatialJitter', parseFloat(e.target.value))}
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+          />
+          <p className="text-[11px] text-slate-500">
+            Applies sub-pixel angular rotation with bilinear resampling, invalidating lattice-based coordinate decoders.
+          </p>
+        </div>
+
+        {/* 7. Edge-Preserving Micro-Sharpen */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Feather className="w-3.5 h-3.5 text-teal-400" />
+              <span>Edge-Preserving Micro-Sharpen</span>
+            </div>
+            <span className="font-mono text-teal-400 font-semibold bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[11px]">
+              {config.unsharpMask > 0 ? `${config.unsharpMask.toFixed(1)}x` : 'Off'}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={2.0}
+            step={0.1}
+            value={config.unsharpMask}
+            onChange={(e) => updateField('unsharpMask', parseFloat(e.target.value))}
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+          />
+          <p className="text-[11px] text-slate-500">
+            Restores crisp edge acuity with an unsharp mask pass to offset blur while removing steganography.
+          </p>
+        </div>
       </div>
+
 
       {/* Output Format & Re-Quantization */}
       <div className="pt-4 border-t border-slate-800/80 space-y-4">

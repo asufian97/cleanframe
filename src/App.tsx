@@ -120,6 +120,9 @@ export function App() {
         p.config.contrast === newConfig.contrast &&
         p.config.brightness === newConfig.brightness &&
         p.config.cropPixels === newConfig.cropPixels &&
+        p.config.chrominanceDither === newConfig.chrominanceDither &&
+        Math.abs(p.config.spatialJitter - newConfig.spatialJitter) < 0.001 &&
+        Math.abs(p.config.unsharpMask - newConfig.unsharpMask) < 0.01 &&
         p.config.outputFormat === newConfig.outputFormat &&
         Math.abs(p.config.quality - newConfig.quality) < 0.001
       ) {
@@ -128,6 +131,7 @@ export function App() {
       }
     }
     setActivePresetKey(matchedKey);
+
   };
 
   // Reset workspace
