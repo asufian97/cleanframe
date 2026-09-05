@@ -108,8 +108,10 @@ export function removeWatermarkReverseAlpha(
       // Safety guard against dark hole / ghost watermark artifacts:
       // If the pixel is already darker than (alpha * logoValue), subtracting white would yield negative numbers,
       // meaning this pixel didn't actually contain a white watermark (e.g. misaligned box).
-      // Smoothly attenuate alpha to guarantee we never carve an artificial black star.
-      let effectiveAlpha = Math.min(alphaMagnitude * alphaGain, MAX_ALPHA);
+      // Continuous edge boundary feather to guarantee zero rectangular seam or edge line
+      const edgeDist = Math.min(row, height - 1 - row, col, width - 1 - col);
+      const edgeFactor = edgeDist < 4 ? Math.sin((edgeDist / 4) * (Math.PI / 2)) : 1.0;
+      let effectiveAlpha = Math.min(alphaMagnitude * alphaGain, MAX_ALPHA) * edgeFactor;
       if (logoValue > 0) {
         const avgChannel = (imageData.data[imgIdx] + imageData.data[imgIdx + 1] + imageData.data[imgIdx + 2]) / 3;
         const minWatermarkedVal = effectiveAlpha * logoValue;

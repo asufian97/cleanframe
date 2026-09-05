@@ -223,13 +223,15 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
         height
       );
 
-      // Split line
-      ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 3;
+      // Subtle split comparison line
+      ctx.strokeStyle = 'rgba(52, 211, 153, 0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 4]);
       ctx.beginPath();
       ctx.moveTo(splitX, 0);
       ctx.lineTo(splitX, height);
       ctx.stroke();
+      ctx.setLineDash([]);
 
       // Split labels
       ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
@@ -538,7 +540,13 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
               />
 
               {/* Viewport Card */}
-              <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800/80 shadow-2xl aspect-video flex items-center justify-center">
+              <div
+                className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-850 shadow-2xl flex items-center justify-center min-h-[280px]"
+                style={{
+                  aspectRatio: metadata ? `${metadata.width} / ${metadata.height}` : '16 / 9',
+                  maxHeight: '620px',
+                }}
+              >
                 <canvas
                   ref={canvasRef}
                   className="max-w-full max-h-full object-contain"
@@ -579,6 +587,7 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
+                    title="Shows comparison divider line"
                   >
                     <Columns className="w-3 h-3" />
                     Split View
@@ -682,8 +691,14 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                     </a>
                   </div>
 
-                  {/* Preview Player of Output */}
-                  <div className="rounded-xl overflow-hidden border border-emerald-500/30 bg-black aspect-video max-h-56 flex items-center justify-center">
+                  {/* Preview Player of Output without green border lines */}
+                  <div
+                    className="rounded-xl overflow-hidden border border-slate-800 bg-black flex items-center justify-center"
+                    style={{
+                      aspectRatio: metadata ? `${metadata.width} / ${metadata.height}` : '16 / 9',
+                      maxHeight: '260px',
+                    }}
+                  >
                     <video src={exportResult.url} controls className="w-full h-full object-contain" />
                   </div>
                 </div>
