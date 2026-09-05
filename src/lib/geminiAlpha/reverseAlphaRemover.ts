@@ -105,13 +105,27 @@ export function removeWatermarkReverseAlpha(
       const signalAlpha = Math.max(0, alphaMagnitude - ALPHA_NOISE_FLOOR) * alphaGain;
       if (signalAlpha < ALPHA_THRESHOLD) continue;
 
-      const alpha = Math.min(alphaMagnitude * alphaGain, MAX_ALPHA);
-      const oneMinusAlpha = 1.0 - alpha;
+      // Safety guard against dark hole / ghost watermark artifacts:
+      // If the pixel is already darker than (alpha * logoValue), subtracting white would yield negative numbers,
+      // meaning this pixel didn't actually contain a white watermark (e.g. misaligned box).
+      // Smoothly attenuate alpha to guarantee we never carve an artificial black star.
+      let effectiveAlpha = Math.min(alphaMagnitude * alphaGain, MAX_ALPHA);
+      if (logoValue > 0) {
+        const avgChannel = (imageData.data[imgIdx] + imageData.data[imgIdx + 1] + imageData.data[imgIdx + 2]) / 3;
+        const minWatermarkedVal = effectiveAlpha * logoValue;
+        if (avgChannel < minWatermarkedVal) {
+          const factor = Math.max(0, avgChannel / (minWatermarkedVal + 1e-4));
+          effectiveAlpha = effectiveAlpha * (factor * factor);
+        }
+      }
+
+      if (effectiveAlpha < ALPHA_THRESHOLD) continue;
+      const oneMinusAlpha = 1.0 - effectiveAlpha;
 
       // Reverse solve each RGB channel
       for (let c = 0; c < 3; c++) {
         const watermarked = imageData.data[imgIdx + c];
-        const original = (watermarked - alpha * logoValue) / oneMinusAlpha;
+        const original = (watermarked - effectiveAlpha * logoValue) / oneMinusAlpha;
         imageData.data[imgIdx + c] = Math.max(0, Math.min(255, Math.round(original)));
       }
     }

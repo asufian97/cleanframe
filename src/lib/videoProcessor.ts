@@ -30,6 +30,9 @@ export interface VideoProcessingConfig {
   quality: number; // 1 to 10 (MediaRecorder bitrate factor)
 }
 
+export { detectGeminiWatermark } from './geminiAlpha/watermarkDetector';
+export type { DetectionResult } from './geminiAlpha/watermarkDetector';
+
 /**
  * Standard Gemini Watermark placements from the official output catalog
  */
@@ -64,33 +67,34 @@ export function getRecommendedGeminiRegion(width: number, height: number): Water
 
   // Portrait (e.g. 1080x1920 or 720x1280)
   if (height > width) {
-    const size = 48;
-    const marginRight = 72;
-    const marginBottom = 72;
+    const size = Math.round(width * 0.065);
+    const margin = Math.round(width * 0.08);
     return {
-      x: Math.round(((width - marginRight - size) / width) * 1000) / 10,
-      y: Math.round(((height - marginBottom - size) / height) * 1000) / 10,
+      x: Math.round(((width - margin - size) / width) * 1000) / 10,
+      y: Math.round(((height - margin - size) / height) * 1000) / 10,
       width: Math.round((size / width) * 1000) / 10,
       height: Math.round((size / height) * 1000) / 10,
       isPercentage: true,
     };
   }
 
-  // Default fallback for other dimensions
+  // Default fallback for 854x480 / 480p / other dimensions
+  const size = 48;
+  const margin = 48;
   return {
-    x: 88,
-    y: 84,
-    width: 8,
-    height: 11,
+    x: Math.round(((width - margin - size) / width) * 1000) / 10,
+    y: Math.round(((height - margin - size) / height) * 1000) / 10,
+    width: Math.round((size / width) * 1000) / 10,
+    height: Math.round((size / height) * 1000) / 10,
     isPercentage: true,
   };
 }
 
 export const DEFAULT_GEMINI_REGION: WatermarkRegion = {
-  x: 88,
-  y: 84,
-  width: 8,
-  height: 11,
+  x: 88.8,
+  y: 80.0,
+  width: 5.6,
+  height: 10.0,
   isPercentage: true,
 };
 
@@ -513,10 +517,12 @@ export async function createDemoGeminiVideo(): Promise<File> {
     if (e.data.size > 0) chunks.push(e.data);
   };
 
-  // Watermark dimensions for 854x480 (56x56 px, bottom-right margin 48px)
-  const wmSize = 56;
-  const wmX = width - wmSize - 48;
-  const wmY = height - wmSize - 48;
+  // Watermark dimensions perfectly aligned with catalog region
+  const demoRegion = getRecommendedGeminiRegion(width, height);
+  const absRegion = getAbsoluteRegion(demoRegion, width, height);
+  const wmSize = absRegion.width;
+  const wmX = absRegion.x;
+  const wmY = absRegion.y;
   const alphaMap = getCalibratedGeminiAlphaMap(wmSize, wmSize, '48');
 
   return new Promise((resolve) => {

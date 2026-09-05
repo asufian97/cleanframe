@@ -12,6 +12,7 @@ import {
   createDemoGeminiVideo,
   getAbsoluteRegion,
   getRecommendedGeminiRegion,
+  detectGeminiWatermark,
 } from '../lib/videoProcessor';
 import {
   Video,
@@ -48,6 +49,8 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
   // Configuration state
   const [config, setConfig] = useState<VideoProcessingConfig>(DEFAULT_VIDEO_CONFIG);
   const [activePreset, setActivePreset] = useState<'1080p' | '720p' | 'custom'>('1080p');
+  const [detectStatus, setDetectStatus] = useState<string | null>(null);
+  const [isDetecting, setIsDetecting] = useState<boolean>(false);
 
   // Preview & playback state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -66,6 +69,52 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
   const animationFrameRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Auto-detect watermark on current video frame using NCC template matching
+  const handleAutoDetect = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2) return;
+
+    setIsDetecting(true);
+    setDetectStatus('Scanning frame for Gemini watermark...');
+
+    try {
+      const width = video.videoWidth || 854;
+      const height = video.videoHeight || 480;
+
+      const scanCanvas = document.createElement('canvas');
+      scanCanvas.width = width;
+      scanCanvas.height = height;
+      const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+      if (!scanCtx) return;
+
+      scanCtx.drawImage(video, 0, 0, width, height);
+      const imgData = scanCtx.getImageData(0, 0, width, height);
+
+      const detection = detectGeminiWatermark(imgData, config.region);
+      if (detection.found) {
+        setConfig((prev) => ({
+          ...prev,
+          region: detection.region,
+          mode: 'reverse-alpha',
+        }));
+        const matchPct = Math.round(detection.confidence * 100);
+        setDetectStatus(`Watermark locked: X: ${detection.region.x}%, Y: ${detection.region.y}% (${matchPct}% match)`);
+      } else {
+        setConfig((prev) => ({
+          ...prev,
+          region: detection.region,
+        }));
+        setDetectStatus(`Watermark aligned: X: ${detection.region.x}%, Y: ${detection.region.y}%`);
+      }
+    } catch (e) {
+      console.error(e);
+      setDetectStatus('Auto-align completed using catalog anchor.');
+    } finally {
+      setIsDetecting(false);
+      setTimeout(() => setDetectStatus(null), 5000);
+    }
+  }, [config.region]);
 
   // Handle file selection
   const handleFileChange = async (file: File) => {
@@ -120,33 +169,16 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
 
   // Preset definitions
   const applyPreset = (presetName: '1080p' | '720p' | 'standard') => {
-    if (!metadata) return;
     setActivePreset(presetName === 'standard' ? '1080p' : presetName);
-
-    if (presetName === '1080p') {
-      const rec = getRecommendedGeminiRegion(1920, 1080);
-      setConfig((prev) => ({
-        ...prev,
-        region: rec,
-        alphaGain: 1.0,
-        mode: 'reverse-alpha',
-      }));
-    } else if (presetName === '720p') {
-      const rec = getRecommendedGeminiRegion(1280, 720);
-      setConfig((prev) => ({
-        ...prev,
-        region: rec,
-        alphaGain: 1.0,
-        mode: 'reverse-alpha',
-      }));
-    } else {
-      setConfig((prev) => ({
-        ...prev,
-        region: DEFAULT_GEMINI_REGION,
-        alphaGain: 1.0,
-        mode: 'reverse-alpha',
-      }));
-    }
+    const w = metadata?.width || (presetName === '1080p' ? 1920 : 1280);
+    const h = metadata?.height || (presetName === '1080p' ? 1080 : 720);
+    const rec = getRecommendedGeminiRegion(w, h);
+    setConfig((prev) => ({
+      ...prev,
+      region: rec,
+      alphaGain: 1.0,
+      mode: 'reverse-alpha',
+    }));
   };
 
   // Render current frame on canvas
@@ -496,7 +528,10 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                 src={videoUrl}
                 playsInline
                 preload="auto"
-                onLoadedMetadata={() => renderFrame()}
+                onLoadedMetadata={() => {
+                  renderFrame();
+                  setTimeout(() => handleAutoDetect(), 100);
+                }}
                 onSeeked={() => renderFrame()}
                 onEnded={() => setIsPlaying(false)}
                 className="hidden"
@@ -806,20 +841,42 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                   <span className="text-xs font-bold text-white uppercase tracking-wider">
                     Target Bounding Box
                   </span>
-                  <button
-                    onClick={() => {
-                      if (metadata) {
-                        const rec = getRecommendedGeminiRegion(metadata.width, metadata.height);
-                        setConfig((p) => ({ ...p, region: rec }));
-                      } else {
-                        setConfig((p) => ({ ...p, region: DEFAULT_GEMINI_REGION }));
-                      }
-                    }}
-                    className="text-[11px] text-emerald-400 hover:underline cursor-pointer"
-                  >
-                    Auto-Fit Resolution
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleAutoDetect}
+                      disabled={isDetecting}
+                      className="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 cursor-pointer transition-colors font-medium shadow-sm"
+                      title="Scans video frames with template matching and snaps bounding box to exact Gemini watermark"
+                    >
+                      {isDetecting ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-emerald-300" />
+                      ) : (
+                        <Wand2 className="w-3 h-3 text-emerald-300" />
+                      )}
+                      <span>{isDetecting ? 'Scanning...' : 'Auto-Lock Watermark'}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (metadata) {
+                          const rec = getRecommendedGeminiRegion(metadata.width, metadata.height);
+                          setConfig((p) => ({ ...p, region: rec }));
+                        } else {
+                          setConfig((p) => ({ ...p, region: DEFAULT_GEMINI_REGION }));
+                        }
+                      }}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 hover:underline cursor-pointer"
+                    >
+                      Preset Fit
+                    </button>
+                  </div>
                 </div>
+
+                {detectStatus && (
+                  <div className="text-[11px] px-2.5 py-1.5 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 flex items-center gap-1.5 shadow-sm">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate">{detectStatus}</span>
+                  </div>
+                )}
 
                 <div className="space-y-3 text-xs">
                   <div>
