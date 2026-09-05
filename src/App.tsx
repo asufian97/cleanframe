@@ -7,6 +7,7 @@ import { InspectionPanel } from './components/InspectionPanel';
 import { ActionBar } from './components/ActionBar';
 import { PrivacyModal } from './components/PrivacyModal';
 import { SocialLabelComparison } from './components/SocialLabelComparison';
+import { VideoWatermarkCleaner } from './components/VideoWatermarkCleaner';
 import type { MetadataAuditResult } from './lib/metadataScanner';
 import { scanImageMetadata } from './lib/metadataScanner';
 import type {
@@ -19,6 +20,9 @@ import { Shield, ArrowLeft, FileText, Share2 } from 'lucide-react';
 
 
 export function App() {
+  // Navigation mode: 'image' | 'video'
+  const [activeTab, setActiveTab] = useState<'image' | 'video'>('video');
+
   // Image state
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
@@ -160,10 +164,17 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      <Navbar onOpenPrivacyInfo={() => setIsPrivacyModalOpen(true)} />
+      <Navbar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onOpenPrivacyInfo={() => setIsPrivacyModalOpen(true)}
+      />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {!sourceFile || !originalImageUrl ? (
+        {activeTab === 'video' ? (
+          /* Video Gemini Watermark Cleaner Mode */
+          <VideoWatermarkCleaner onOpenPrivacyInfo={() => setIsPrivacyModalOpen(true)} />
+        ) : !sourceFile || !originalImageUrl ? (
           /* Upload view */
           <UploadZone onImageSelected={handleImageSelected} />
         ) : (
