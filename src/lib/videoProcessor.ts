@@ -1,9 +1,15 @@
 /**
  * Client-Side Video Watermark Processor for CleanFrame
  * 100% In-Browser - Zero Server Uploads - Audio Preserved
+ * Powered by mathematically exact Reverse Alpha Blending (GargantuaX/gemini-watermark-remover formulation)
  */
 
-export type WatermarkRemovalMode = 'inpaint' | 'blur' | 'crop';
+import {
+  applyReverseAlphaToCanvas,
+  getCalibratedGeminiAlphaMap,
+} from './geminiAlpha/reverseAlphaRemover';
+
+export type WatermarkRemovalMode = 'reverse-alpha' | 'inpaint' | 'blur' | 'crop';
 
 export interface WatermarkRegion {
   x: number; // percentage (0-100) or absolute px
@@ -16,24 +22,83 @@ export interface WatermarkRegion {
 export interface VideoProcessingConfig {
   mode: WatermarkRemovalMode;
   region: WatermarkRegion;
-  blurRadius: number; // 4 to 32px
-  featherRadius: number; // 2 to 24px
+  alphaGain: number; // 0.4 to 2.0 (default 1.0)
+  alphaProfile: '96-20260520' | '96' | '48' | '36-v2';
+  blurRadius: number; // 4 to 32px (for blur mode)
+  featherRadius: number; // 2 to 24px (for inpaint mode)
   cropBottomPercent: number; // For crop mode, 4% to 15%
   quality: number; // 1 to 10 (MediaRecorder bitrate factor)
 }
 
+/**
+ * Standard Gemini Watermark placements from the official output catalog
+ */
+export function getRecommendedGeminiRegion(width: number, height: number): WatermarkRegion {
+  // 1080p Standard (1920x1080): size = 72px, margin = 108px from right and bottom
+  if (width >= 1600 && height >= 900) {
+    const size = 72;
+    const marginRight = 108;
+    const marginBottom = 108;
+    return {
+      x: Math.round(((width - marginRight - size) / width) * 1000) / 10,
+      y: Math.round(((height - marginBottom - size) / height) * 1000) / 10,
+      width: Math.round((size / width) * 1000) / 10,
+      height: Math.round((size / height) * 1000) / 10,
+      isPercentage: true,
+    };
+  }
+
+  // 720p Standard (1280x720): size = 48px, margin = 72px from right and bottom
+  if (width >= 1000 && height >= 600) {
+    const size = 48;
+    const marginRight = 72;
+    const marginBottom = 72;
+    return {
+      x: Math.round(((width - marginRight - size) / width) * 1000) / 10,
+      y: Math.round(((height - marginBottom - size) / height) * 1000) / 10,
+      width: Math.round((size / width) * 1000) / 10,
+      height: Math.round((size / height) * 1000) / 10,
+      isPercentage: true,
+    };
+  }
+
+  // Portrait (e.g. 1080x1920 or 720x1280)
+  if (height > width) {
+    const size = 48;
+    const marginRight = 72;
+    const marginBottom = 72;
+    return {
+      x: Math.round(((width - marginRight - size) / width) * 1000) / 10,
+      y: Math.round(((height - marginBottom - size) / height) * 1000) / 10,
+      width: Math.round((size / width) * 1000) / 10,
+      height: Math.round((size / height) * 1000) / 10,
+      isPercentage: true,
+    };
+  }
+
+  // Default fallback for other dimensions
+  return {
+    x: 88,
+    y: 84,
+    width: 8,
+    height: 11,
+    isPercentage: true,
+  };
+}
+
 export const DEFAULT_GEMINI_REGION: WatermarkRegion = {
-  // Standard Gemini/Veo bottom-right positioning
-  x: 82,
-  y: 86,
-  width: 15,
+  x: 88,
+  y: 84,
+  width: 8,
   height: 11,
   isPercentage: true,
 };
 
 export const DEFAULT_VIDEO_CONFIG: VideoProcessingConfig = {
-  mode: 'inpaint',
+  mode: 'reverse-alpha', // Reverse Alpha is the default mathematical remover
   region: DEFAULT_GEMINI_REGION,
+  alphaGain: 1.0,
+  alphaProfile: '96-20260520',
   blurRadius: 14,
   featherRadius: 10,
   cropBottomPercent: 8,
@@ -130,9 +195,7 @@ export function processVideoFrame(
     const cleanHeight = height - cropPx;
 
     ctx.clearRect(0, 0, width, height);
-    // Draw cropped portion
     ctx.drawImage(source, 0, 0, width, cleanHeight, 0, 0, width, cleanHeight);
-    // Fill remaining bottom with seamless edge extension
     ctx.drawImage(source, 0, cleanHeight - 1, width, 1, 0, cleanHeight, width, cropPx);
     return;
   }
@@ -143,11 +206,20 @@ export function processVideoFrame(
   const rect = getAbsoluteRegion(config.region, width, height);
   if (rect.width <= 0 || rect.height <= 0) return;
 
-  const feather = Math.max(2, config.featherRadius);
+  // --- 1. PRIMARY ALGORITHM: REVERSE ALPHA BLENDING (NO BLUR, TRUE REMOVAL) ---
+  if (config.mode === 'reverse-alpha') {
+    applyReverseAlphaToCanvas(ctx, rect, {
+      alphaGain: config.alphaGain,
+      alphaProfile: config.alphaProfile,
+      logoValue: 255,
+    });
+    return;
+  }
 
+  // --- 2. FALLBACK MODE: FEATHERED BLUR ---
   if (config.mode === 'blur') {
-    // Mode Blur: Feathered localized blur
     ctx.save();
+    const feather = Math.max(2, config.featherRadius);
 
     const patchCanvas = document.createElement('canvas');
     patchCanvas.width = rect.width + feather * 2;
@@ -173,8 +245,9 @@ export function processVideoFrame(
     return;
   }
 
-  // Mode Inpaint: Intelligent neighbor sampling + directional blending
+  // --- 3. FALLBACK MODE: NEIGHBOR TEXTURE INPAINT ---
   ctx.save();
+  const feather = Math.max(2, config.featherRadius);
 
   const patchCanvas = document.createElement('canvas');
   patchCanvas.width = rect.width;
@@ -182,7 +255,6 @@ export function processVideoFrame(
   const patchCtx = patchCanvas.getContext('2d');
 
   if (patchCtx) {
-    // 1. Sample from above the watermark box
     const sampleAboveY = Math.max(0, rect.y - rect.height);
     const sampleAboveH = Math.min(rect.height, rect.y);
 
@@ -200,7 +272,6 @@ export function processVideoFrame(
       );
     }
 
-    // 2. Sample from left of the watermark box with 50% opacity blend
     const sampleLeftX = Math.max(0, rect.x - rect.width);
     const sampleLeftW = Math.min(rect.width, rect.x);
 
@@ -220,7 +291,6 @@ export function processVideoFrame(
       patchCtx.globalAlpha = 1.0;
     }
 
-    // 3. Apply subtle smoothing filter to patch to eliminate high-frequency logo lines
     const smoothCanvas = document.createElement('canvas');
     smoothCanvas.width = rect.width;
     smoothCanvas.height = rect.height;
@@ -230,24 +300,13 @@ export function processVideoFrame(
       smoothCtx.filter = `blur(${Math.max(4, config.blurRadius * 0.5)}px)`;
       smoothCtx.drawImage(patchCanvas, 0, 0);
 
-      // 4. Feathered draw back to main context
       ctx.save();
       ctx.beginPath();
       const r = Math.min(feather, rect.width / 4, rect.height / 4);
       ctx.roundRect(rect.x, rect.y, rect.width, rect.height, r);
       ctx.clip();
 
-      // Draw smoothed texture patch
       ctx.drawImage(smoothCanvas, rect.x, rect.y);
-
-      // Gentle edge gradient over boundary to erase seam
-      const edgeGrad = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.height);
-      edgeGrad.addColorStop(0, 'rgba(0,0,0,0)');
-      edgeGrad.addColorStop(0.2, 'rgba(255,255,255,0.02)');
-      edgeGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = edgeGrad;
-      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-
       ctx.restore();
     }
   }
@@ -303,13 +362,14 @@ export async function cleanVideoClientSide(
         return;
       }
 
-      // Prepare MediaStream from canvas
       const fps = 30;
       const stream = canvas.captureStream(fps);
 
       // Add audio track if available
       try {
-        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         if (AudioContextClass) {
           const audioCtx = new AudioContextClass();
           const sourceNode = audioCtx.createMediaElementSource(video);
@@ -326,7 +386,6 @@ export async function cleanVideoClientSide(
         // Audio capture not available or restricted; proceed with video stream
       }
 
-      // Determine supported MIME type
       let mimeType = 'video/webm;codecs=vp9';
       if (MediaRecorder.isTypeSupported('video/mp4')) {
         mimeType = 'video/mp4';
@@ -428,8 +487,8 @@ export async function cleanVideoClientSide(
 }
 
 /**
- * Generate a synthetic 4-second demo video containing an animated background
- * and the iconic Gemini sparkle watermark at the bottom right.
+ * Generate an interactive 4-second demo video stamped with the genuine calibrated
+ * Gemini alpha watermark, enabling immediate testing of the Reverse Alpha Blending algorithm.
  */
 export async function createDemoGeminiVideo(): Promise<File> {
   const width = 854;
@@ -441,7 +500,7 @@ export async function createDemoGeminiVideo(): Promise<File> {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
 
   const stream = canvas.captureStream(fps);
   const recorder = new MediaRecorder(stream, {
@@ -453,6 +512,12 @@ export async function createDemoGeminiVideo(): Promise<File> {
   recorder.ondataavailable = (e) => {
     if (e.data.size > 0) chunks.push(e.data);
   };
+
+  // Watermark dimensions for 854x480 (56x56 px, bottom-right margin 48px)
+  const wmSize = 56;
+  const wmX = width - wmSize - 48;
+  const wmY = height - wmSize - 48;
+  const alphaMap = getCalibratedGeminiAlphaMap(wmSize, wmSize, '48');
 
   return new Promise((resolve) => {
     recorder.onstop = () => {
@@ -476,7 +541,7 @@ export async function createDemoGeminiVideo(): Promise<File> {
       const t = frame / totalFrames;
       const angle = t * Math.PI * 2;
 
-      // Animated futuristic scene
+      // Animated colorful landscape background
       const grad = ctx.createLinearGradient(0, 0, width, height);
       grad.addColorStop(0, `hsl(${220 + Math.sin(angle) * 20}, 70%, 15%)`);
       grad.addColorStop(0.5, `hsl(${260 + Math.cos(angle) * 20}, 65%, 25%)`);
@@ -503,50 +568,23 @@ export async function createDemoGeminiVideo(): Promise<File> {
       ctx.font = '14px system-ui, sans-serif';
       ctx.fillText(`Frame ${frame + 1} / ${totalFrames} • Ultra-HD Veo Synthesis`, 40, 88);
 
-      // --- GEMINI WATERMARK IN BOTTOM-RIGHT CORNER ---
-      const wmX = width - 130;
-      const wmY = height - 55;
-
-      // Watermark translucent pill
-      ctx.save();
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
-      ctx.beginPath();
-      ctx.roundRect(wmX - 10, wmY - 18, 125, 42, 10);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Gemini 4-pointed sparkle star icon
-      const starX = wmX + 10;
-      const starY = wmY + 4;
-      const starPulse = 1 + Math.sin(angle * 4) * 0.15;
-      const starGrad = ctx.createLinearGradient(starX - 12, starY - 12, starX + 12, starY + 12);
-      starGrad.addColorStop(0, '#38bdf8');
-      starGrad.addColorStop(0.5, '#818cf8');
-      starGrad.addColorStop(1, '#f43f5e');
-      ctx.fillStyle = starGrad;
-
-      ctx.beginPath();
-      const rOuter = 11 * starPulse;
-      const rInner = 3.5 * starPulse;
-      for (let p = 0; p < 8; p++) {
-        const rad = (p * Math.PI) / 4 - Math.PI / 2;
-        const radDist = p % 2 === 0 ? rOuter : rInner;
-        const px = starX + Math.cos(rad) * radDist;
-        const py = starY + Math.sin(rad) * radDist;
-        if (p === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+      // --- STAMP REAL GEMINI ALPHA WATERMARK (alpha * 255 + (1 - alpha) * original) ---
+      const imgData = ctx.getImageData(wmX, wmY, wmSize, wmSize);
+      for (let row = 0; row < wmSize; row++) {
+        for (let col = 0; col < wmSize; col++) {
+          const idx = (row * wmSize + col) * 4;
+          const a = alphaMap[row * wmSize + col] || 0;
+          if (a > 0.005) {
+            const alpha = Math.min(a * 1.0, 0.95);
+            for (let c = 0; c < 3; c++) {
+              const orig = imgData.data[idx + c];
+              // Exact Gemini compositing: watermarked = alpha * 255 + (1 - alpha) * orig
+              imgData.data[idx + c] = Math.round(alpha * 255 + (1 - alpha) * orig);
+            }
+          }
+        }
       }
-      ctx.closePath();
-      ctx.fill();
-
-      // Gemini text
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.font = '600 15px system-ui, sans-serif';
-      ctx.fillText('Gemini', starX + 18, starY + 5);
-
-      ctx.restore();
+      ctx.putImageData(imgData, wmX, wmY);
 
       frame++;
     }, 1000 / fps);

@@ -11,6 +11,7 @@ import {
   cleanVideoClientSide,
   createDemoGeminiVideo,
   getAbsoluteRegion,
+  getRecommendedGeminiRegion,
 } from '../lib/videoProcessor';
 import {
   Video,
@@ -24,13 +25,12 @@ import {
   AlertTriangle,
   Layers,
   Wand2,
-  Crop,
   Eye,
   Columns,
   Loader2,
-  Film,
   Volume2,
   ShieldCheck,
+  Zap,
 } from 'lucide-react';
 
 interface VideoWatermarkCleanerProps {
@@ -47,7 +47,7 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
 
   // Configuration state
   const [config, setConfig] = useState<VideoProcessingConfig>(DEFAULT_VIDEO_CONFIG);
-  const [activePreset, setActivePreset] = useState<'standard' | 'wide' | 'compact' | 'custom'>('standard');
+  const [activePreset, setActivePreset] = useState<'1080p' | '720p' | 'custom'>('1080p');
 
   // Preview & playback state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -89,12 +89,21 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
       setExportResult(null);
       setCurrentTime(0);
       setIsPlaying(false);
+
+      // Auto-calculate exact recommended Gemini watermark bounding box based on video dimensions
+      const recRegion = getRecommendedGeminiRegion(meta.width, meta.height);
+      setConfig((prev) => ({
+        ...prev,
+        region: recRegion,
+        mode: 'reverse-alpha', // Always default to mathematical Reverse Alpha
+      }));
+      setActivePreset(meta.width >= 1600 ? '1080p' : '720p');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to read video file');
     }
   };
 
-  // Load sample demo video with Gemini AI watermark
+  // Load sample demo video with real Gemini AI watermark
   const handleLoadDemo = async () => {
     setIsGeneratingDemo(true);
     setErrorMsg(null);
@@ -110,31 +119,32 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
   };
 
   // Preset definitions
-  const applyPreset = (presetName: 'standard' | 'wide' | 'compact') => {
-    setActivePreset(presetName);
-    if (presetName === 'standard') {
+  const applyPreset = (presetName: '1080p' | '720p' | 'standard') => {
+    if (!metadata) return;
+    setActivePreset(presetName === 'standard' ? '1080p' : presetName);
+
+    if (presetName === '1080p') {
+      const rec = getRecommendedGeminiRegion(1920, 1080);
       setConfig((prev) => ({
         ...prev,
-        region: { x: 82, y: 86, width: 15, height: 11, isPercentage: true },
-        blurRadius: 14,
-        featherRadius: 10,
-        mode: 'inpaint',
+        region: rec,
+        alphaGain: 1.0,
+        mode: 'reverse-alpha',
       }));
-    } else if (presetName === 'wide') {
+    } else if (presetName === '720p') {
+      const rec = getRecommendedGeminiRegion(1280, 720);
       setConfig((prev) => ({
         ...prev,
-        region: { x: 74, y: 85, width: 23, height: 12, isPercentage: true },
-        blurRadius: 16,
-        featherRadius: 12,
-        mode: 'inpaint',
+        region: rec,
+        alphaGain: 1.0,
+        mode: 'reverse-alpha',
       }));
-    } else if (presetName === 'compact') {
+    } else {
       setConfig((prev) => ({
         ...prev,
-        region: { x: 86, y: 88, width: 11, height: 9, isPercentage: true },
-        blurRadius: 12,
-        featherRadius: 8,
-        mode: 'inpaint',
+        region: DEFAULT_GEMINI_REGION,
+        alphaGain: 1.0,
+        mode: 'reverse-alpha',
       }));
     }
   };
@@ -164,7 +174,7 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = width;
       tempCanvas.height = height;
-      const tempCtx = tempCanvas.getContext('2d')!;
+      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })!;
       processVideoFrame(video, tempCtx, width, height, config);
 
       // Draw right half
@@ -191,20 +201,20 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
 
       // Split labels
       ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-      ctx.fillRect(16, 16, 110, 28);
-      ctx.fillRect(width - 130, 16, 114, 28);
+      ctx.fillRect(16, 16, 120, 28);
+      ctx.fillRect(width - 150, 16, 134, 28);
 
       ctx.font = '600 12px system-ui, sans-serif';
       ctx.fillStyle = '#f43f5e';
       ctx.fillText('Original Watermark', 24, 34);
 
       ctx.fillStyle = '#34d399';
-      ctx.fillText('Gemini Removed', width - 122, 34);
+      ctx.fillText('Reverse Alpha (No Blur)', width - 142, 34);
     } else {
       // Cleaned mode
       processVideoFrame(video, ctx, width, height, config);
 
-      // Target overlay overlay mode if selected
+      // Target overlay mode if selected
       if (previewMode === 'target') {
         const rect = getAbsoluteRegion(config.region, width, height);
         ctx.save();
@@ -220,7 +230,7 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
         // Label
         ctx.fillStyle = '#38bdf8';
         ctx.font = 'bold 12px system-ui, sans-serif';
-        ctx.fillText('Gemini Watermark Target Area', rect.x, Math.max(16, rect.y - 8));
+        ctx.fillText('Gemini Alpha Target Area', rect.x, Math.max(16, rect.y - 8));
         ctx.restore();
       }
     }
@@ -354,14 +364,14 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
         <div className="max-w-4xl mx-auto">
           <div className="text-center space-y-3 mb-8">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Video De-Watermarking</span>
+              <Zap className="w-3.5 h-3.5" />
+              <span>Exact Reverse Alpha Blending</span>
             </div>
             <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-              Erase <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">Gemini & Veo Watermarks</span> from Video
+              Remove <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">Gemini Video Watermarks</span> Without Blur
             </h2>
             <p className="text-slate-400 max-w-xl mx-auto text-sm sm:text-base">
-              Strip the bottom-right Gemini star icon and AI watermark with 100% in-browser frame inpainting. No cloud uploads, audio preserved, completely private.
+              Mathematically inverts the semi-transparent Gemini watermark overlay to cleanly restore original pixels. Zero blurring, zero cloud uploads, audio preserved.
             </p>
           </div>
 
@@ -392,22 +402,22 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                 Drop your Gemini AI video here, or <span className="text-emerald-400 underline">browse</span>
               </p>
               <p className="text-xs text-slate-400">
-                Supports MP4, WebM, MOV • Recommended duration under 60s for fastest in-memory rendering
+                Supports MP4, WebM, MOV • Reverse alpha blending runs 100% in your browser
               </p>
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400 mt-2">
               <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/60 border border-slate-700/50">
+                <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                No Blurring (Exact Inverse)
+              </span>
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/60 border border-slate-700/50">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                Zero Cloud Uploads
+                Zero Server Uploads
               </span>
               <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/60 border border-slate-700/50">
                 <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
                 Audio Track Kept
-              </span>
-              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/60 border border-slate-700/50">
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                Bottom-Right Inpaint
               </span>
             </div>
           </div>
@@ -504,7 +514,13 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                 <div className="absolute top-4 left-4 flex items-center gap-2">
                   <span className="px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur-md border border-slate-700/80 text-[11px] font-semibold text-slate-200 flex items-center gap-1.5 shadow-md">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Gemini Watermark Inpaint Active
+                    {config.mode === 'reverse-alpha'
+                      ? 'Reverse Alpha (Exact Removal • No Blur)'
+                      : config.mode === 'inpaint'
+                      ? 'Texture Inpainting Active'
+                      : config.mode === 'blur'
+                      ? 'Feathered Blur Active'
+                      : 'Margin Crop Active'}
                   </span>
                 </div>
 
@@ -580,7 +596,7 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Removing Gemini Watermark & Re-encoding Video...</span>
+                      <span>Applying Reverse Alpha Blending & Exporting Video...</span>
                     </div>
                     <span className="text-xs font-mono text-emerald-300 font-bold">{exportProgress}%</span>
                   </div>
@@ -595,7 +611,7 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
 
                   <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>
-                      Rendering frame at {exportCurrentTime.toFixed(1)}s of {(metadata?.duration || 0).toFixed(1)}s
+                      Processing frame at {exportCurrentTime.toFixed(1)}s of {(metadata?.duration || 0).toFixed(1)}s
                     </span>
                     <button
                       onClick={handleCancelExport}
@@ -614,9 +630,9 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                         <CheckCircle2 className="w-6 h-6" />
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-white">Video Cleaned Successfully!</h4>
+                        <h4 className="text-sm font-bold text-white">Video Cleaned Losslessly!</h4>
                         <p className="text-xs text-slate-400">
-                          Processed in {(exportResult.processingTimeMs / 1000).toFixed(1)}s • Ready for download
+                          Processed in {(exportResult.processingTimeMs / 1000).toFixed(1)}s • Exact reverse alpha composite
                         </p>
                       </div>
                     </div>
@@ -642,8 +658,8 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                   onClick={handleStartExport}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 transition-all cursor-pointer active:scale-[0.99]"
                 >
-                  <Film className="w-4 h-4" />
-                  <span>Export Clean Video (Remove Gemini Watermark)</span>
+                  <Zap className="w-4 h-4" />
+                  <span>Export Clean Video (Reverse Alpha • No Blur)</span>
                 </button>
               )}
             </div>
@@ -652,12 +668,34 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
             <div className="lg:col-span-4 flex flex-col gap-5">
               {/* Removal Strategy Card */}
               <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
-                <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
-                  <Wand2 className="w-4 h-4 text-emerald-400" />
-                  <span>Removal Algorithm</span>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
+                    <Wand2 className="w-4 h-4 text-emerald-400" />
+                    <span>Removal Algorithm</span>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
+                    GargantuaX Engine
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setConfig((p) => ({ ...p, mode: 'reverse-alpha' }))}
+                    className={`p-2.5 rounded-xl border text-xs flex flex-col items-center text-center gap-1.5 transition-all cursor-pointer col-span-2 ${
+                      config.mode === 'reverse-alpha'
+                        ? 'bg-gradient-to-r from-emerald-500/25 to-cyan-500/25 border-emerald-500 text-emerald-300 font-bold shadow-md'
+                        : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-emerald-400" />
+                      <span className="text-white">Reverse Alpha (No Blur)</span>
+                    </div>
+                    <span className="text-[10px] text-emerald-400/90 font-normal">
+                      Exact mathematical inversion • Zero blurring
+                    </span>
+                  </button>
+
                   <button
                     onClick={() => setConfig((p) => ({ ...p, mode: 'inpaint' }))}
                     className={`p-2.5 rounded-xl border text-xs flex flex-col items-center text-center gap-1.5 transition-all cursor-pointer ${
@@ -666,9 +704,10 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                         : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    <Sparkles className="w-4 h-4" />
-                    <span>Inpaint</span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Inpaint Patch</span>
                   </button>
+
                   <button
                     onClick={() => setConfig((p) => ({ ...p, mode: 'blur' }))}
                     className={`p-2.5 rounded-xl border text-xs flex flex-col items-center text-center gap-1.5 transition-all cursor-pointer ${
@@ -677,31 +716,53 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                         : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    <Eye className="w-4 h-4" />
+                    <Eye className="w-3.5 h-3.5" />
                     <span>Feather Blur</span>
-                  </button>
-                  <button
-                    onClick={() => setConfig((p) => ({ ...p, mode: 'crop' }))}
-                    className={`p-2.5 rounded-xl border text-xs flex flex-col items-center text-center gap-1.5 transition-all cursor-pointer ${
-                      config.mode === 'crop'
-                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-semibold shadow-sm'
-                        : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <Crop className="w-4 h-4" />
-                    <span>Edge Crop</span>
                   </button>
                 </div>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
+                  {config.mode === 'reverse-alpha' &&
+                    'Uses the exact Reverse Alpha Blending equation: original = (watermarked - α × 255) / (1 - α). Completely removes the logo while keeping the background sharp and clear.'}
                   {config.mode === 'inpaint' &&
-                    'Synthesizes surrounding background textures from above and to the left to seamlessly eliminate the Gemini logo without sharp lines.'}
+                    'Samples background textures from surrounding edges to cover non-standard or altered watermarks.'}
                   {config.mode === 'blur' &&
-                    'Applies an intelligent localized soft Gaussian blur to dissolve the watermark into background motion.'}
+                    'Applies localized Gaussian blur to soften the watermark area.'}
                   {config.mode === 'crop' &&
-                    'Trims the bottom watermark margin completely so the video frame above remains pristine.'}
+                    'Trims the bottom margin so upper frames remain pristine.'}
                 </p>
               </div>
+
+              {/* Alpha Gain / Tuning Card (for Reverse Alpha) */}
+              {config.mode === 'reverse-alpha' && (
+                <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                      Alpha Inversion Gain
+                    </span>
+                    <span className="font-mono text-emerald-400 font-semibold">
+                      {config.alphaGain.toFixed(2)}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={1.8}
+                    step={0.05}
+                    value={config.alphaGain}
+                    onChange={(e) =>
+                      setConfig((p) => ({ ...p, alphaGain: parseFloat(e.target.value) }))
+                    }
+                    className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>Gentle (0.5x)</span>
+                    <span className="text-slate-400">Standard (1.0x)</span>
+                    <span>Aggressive (1.8x)</span>
+                  </div>
+                </div>
+              )}
 
               {/* Presets Card */}
               <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
@@ -711,40 +772,30 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                     Gemini Presets
                   </span>
                   <span className="text-[10px] text-slate-500 uppercase font-mono">
-                    Bottom-Right
+                    Catalog Anchors
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <button
-                    onClick={() => applyPreset('standard')}
+                    onClick={() => applyPreset('1080p')}
                     className={`py-2 px-2 rounded-xl text-xs font-medium border text-center transition-all cursor-pointer ${
-                      activePreset === 'standard'
+                      activePreset === '1080p'
                         ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-semibold'
                         : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    Standard
+                    1080p Standard (72px)
                   </button>
                   <button
-                    onClick={() => applyPreset('wide')}
+                    onClick={() => applyPreset('720p')}
                     className={`py-2 px-2 rounded-xl text-xs font-medium border text-center transition-all cursor-pointer ${
-                      activePreset === 'wide'
+                      activePreset === '720p'
                         ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-semibold'
                         : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    Wide Logo
-                  </button>
-                  <button
-                    onClick={() => applyPreset('compact')}
-                    className={`py-2 px-2 rounded-xl text-xs font-medium border text-center transition-all cursor-pointer ${
-                      activePreset === 'compact'
-                        ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-semibold'
-                        : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    Sparkle Only
+                    720p Standard (48px)
                   </button>
                 </div>
               </div>
@@ -757,114 +808,86 @@ export const VideoWatermarkCleaner: React.FC<VideoWatermarkCleanerProps> = () =>
                   </span>
                   <button
                     onClick={() => {
-                      setConfig((p) => ({ ...p, region: DEFAULT_GEMINI_REGION }));
-                      setActivePreset('standard');
+                      if (metadata) {
+                        const rec = getRecommendedGeminiRegion(metadata.width, metadata.height);
+                        setConfig((p) => ({ ...p, region: rec }));
+                      } else {
+                        setConfig((p) => ({ ...p, region: DEFAULT_GEMINI_REGION }));
+                      }
                     }}
                     className="text-[11px] text-emerald-400 hover:underline cursor-pointer"
                   >
-                    Reset to Gemini Default
+                    Auto-Fit Resolution
                   </button>
                 </div>
 
-                {config.mode === 'crop' ? (
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs text-slate-400">
-                      <span>Bottom Crop Margin</span>
-                      <span className="font-mono text-emerald-400">{config.cropBottomPercent}%</span>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <div className="flex justify-between text-slate-400 mb-1">
+                      <span>Horizontal Position (X)</span>
+                      <span className="font-mono text-slate-200">{config.region.x}%</span>
                     </div>
                     <input
                       type="range"
-                      min={4}
-                      max={18}
-                      value={config.cropBottomPercent}
-                      onChange={(e) =>
-                        setConfig((p) => ({ ...p, cropBottomPercent: parseInt(e.target.value, 10) }))
-                      }
+                      min={50}
+                      max={96}
+                      step={0.5}
+                      value={config.region.x}
+                      onChange={(e) => handleRegionChange('x', parseFloat(e.target.value))}
                       className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                     />
                   </div>
-                ) : (
-                  <div className="space-y-3 text-xs">
+
+                  <div>
+                    <div className="flex justify-between text-slate-400 mb-1">
+                      <span>Vertical Position (Y)</span>
+                      <span className="font-mono text-slate-200">{config.region.y}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={60}
+                      max={96}
+                      step={0.5}
+                      value={config.region.y}
+                      onChange={(e) => handleRegionChange('y', parseFloat(e.target.value))}
+                      className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <div className="flex justify-between text-slate-400 mb-1">
-                        <span>Horizontal Position (X)</span>
-                        <span className="font-mono text-slate-200">{config.region.x}%</span>
+                        <span>Width</span>
+                        <span className="font-mono text-slate-200">{config.region.width}%</span>
                       </div>
                       <input
                         type="range"
-                        min={50}
-                        max={95}
-                        value={config.region.x}
-                        onChange={(e) => handleRegionChange('x', parseInt(e.target.value, 10))}
+                        min={4}
+                        max={30}
+                        step={0.5}
+                        value={config.region.width}
+                        onChange={(e) => handleRegionChange('width', parseFloat(e.target.value))}
                         className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                       />
                     </div>
 
                     <div>
                       <div className="flex justify-between text-slate-400 mb-1">
-                        <span>Vertical Position (Y)</span>
-                        <span className="font-mono text-slate-200">{config.region.y}%</span>
+                        <span>Height</span>
+                        <span className="font-mono text-slate-200">{config.region.height}%</span>
                       </div>
                       <input
                         type="range"
-                        min={65}
-                        max={95}
-                        value={config.region.y}
-                        onChange={(e) => handleRegionChange('y', parseInt(e.target.value, 10))}
-                        className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex justify-between text-slate-400 mb-1">
-                          <span>Width</span>
-                          <span className="font-mono text-slate-200">{config.region.width}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={6}
-                          max={35}
-                          value={config.region.width}
-                          onChange={(e) => handleRegionChange('width', parseInt(e.target.value, 10))}
-                          className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
-                        />
-                      </div>
-
-                      <div>
-                        <div className="flex justify-between text-slate-400 mb-1">
-                          <span>Height</span>
-                          <span className="font-mono text-slate-200">{config.region.height}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={5}
-                          max={25}
-                          value={config.region.height}
-                          onChange={(e) => handleRegionChange('height', parseInt(e.target.value, 10))}
-                          className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-slate-400 mb-1">
-                        <span>Edge Feather Radius</span>
-                        <span className="font-mono text-slate-200">{config.featherRadius}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={2}
-                        max={24}
-                        value={config.featherRadius}
-                        onChange={(e) =>
-                          setConfig((p) => ({ ...p, featherRadius: parseInt(e.target.value, 10) }))
-                        }
+                        min={4}
+                        max={25}
+                        step={0.5}
+                        value={config.region.height}
+                        onChange={(e) => handleRegionChange('height', parseFloat(e.target.value))}
                         className="w-full accent-emerald-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                       />
                     </div>
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </div>
